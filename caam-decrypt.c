@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Copyright 2021 NXP
+ * Copyright 2021, 2023 NXP
  *
  * Author: Gaurav Jain <gaurav.jain@nxp.com>
  *
@@ -206,14 +206,19 @@ int skcipher_crypt(int tfmfd, const struct aes_cipher *vec, bool encrypt, char *
 int store_decrypted_data(char *file, char *output_text, unsigned int len)
 {
 	FILE *fp;
+	/* Note:- Caam-decrypt application supports PKCS#7 padding scheme
+	 * only.
+	 * Last byte stores no. of padded bytes in PKCS#7 padding scheme
+	 */
+	int padding_bytes_len = output_text[len - 1];
+	int final_len = len - padding_bytes_len;
 
 	fp = fopen(file, "wb");
 	if (!fp) {
 		printf("Failed to create %s.\n", file);
 		return -1;
 	}
-
-	if (fwrite(output_text, sizeof(char), len, fp) != len) {
+	if (fwrite(output_text, sizeof(char), final_len, fp) != final_len) {
 		printf("Failed to write in %s.\n", file);
 		fclose(fp);
 		return -1;
