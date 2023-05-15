@@ -10,8 +10,12 @@ Encapsulation of black key is called black blob. The decapsulation will result i
 
 
 # 4. Prerequisites
+
+## 4.1 Importing black key using caam-keygen application
 caam-keygen application is needed to import black key from black blob. Make sure that caam-keygen app is already present at /usr/bin.
 
+## 4.2 PKCS#7 Padding Scheme
+caam-decrypt application assumes that plaintext must be padded as per pkcs#7 padding scheme and then encrypted.
 
 # 5. Build the kernel
 
