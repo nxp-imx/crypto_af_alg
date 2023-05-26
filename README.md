@@ -61,19 +61,20 @@ After the device successfully boots with the previously generated image, caam-de
   $ ./caam-decrypt
 Application usage: caam-decrypt [options]
 Options:
-	<blob_name> <enc_algo> <input_file> <output_file>
+	<blob_name> <enc_algo> <input_file> <output_file> [-iv <IV value>]
 	<blob_name> the absolute path of the file that contains the black blob
 	<enc_algo> can be AES-256-CBC
 	<input_file> the absolute path of the file that contains input data
 		     initialization vector(iv) of 16 bytes prepended
 		     size of input file must be multiple of 16
 	<output_file> the absolute path of the file that contains output data
+	<IV value> 16 bytes IV value
 ```
 
 # 7. Use case example
 
 ```
-  $ caam-decrypt myblob AES-256-CBC my_encrypted_file output_decrypted
+  $ caam-decrypt myblob AES-256-CBC my_encrypted_file output_decrypted -iv 01B49451DCD7050C3A7F1BC6B0352B0E
 ```
 
 where:
@@ -81,9 +82,9 @@ where:
 - myblob - generated black key blob. caam-keygen application will import a black key from black blob. this black key will be used by CAAM for decryption.
 - AES-256-CBC - currently the only supported symmetric algorithm used for decryption operation. user has to make sure that encrypted data must uses the same algorithm.
 - my_encrypted_file - Encrypted data stored in a file. Initialization vector(iv) of 16 bytes used during encryption must be prepended to encrypted data.
+- iv - 16 bytes IV value
 ```
 AES Encrypted file format
-	16 Octets - Initialization Vector (IV) is an input to encryption algorithm.
 	nn Octets - Encrypted message  (for AES-256-CBC, it must be multiple of 16)
 ```
 - output_decrypted - contain decrypted data after successful decryption operation.

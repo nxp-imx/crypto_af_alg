@@ -19,6 +19,7 @@
 #include <linux/if_alg.h>
 #include <linux/socket.h>
 #include "caam-decrypt.h"
+#include <ctype.h>
 
 /**
  * print_help - print application help
@@ -27,14 +28,93 @@ void print_help(char *app)
 {
 	printf("Application usage: %s [options]\n", app);
 	printf("Options:\n");
-	printf("        <blob_name> <enc_algo> <input_file> <output_file>\n");
+	printf("        <blob_name> <enc_algo> <input_file> <output_file>");
+	printf(" [-iv <IV value>]\n");
 	printf("        <blob_name> the absolute path of the file that contains the black blob\n");
 	printf("        <enc_algo> can be AES-256-CBC\n");
 	printf("        <input_file> the absolute path of the file that contains input data\n"
 		"                     initialization vector(iv) of 16 bytes prepended\n"
 		"                     size of input file must be multiple of 16\n");
 	printf("        <output_file> the absolute path of the file that contains output data\n");
+	printf("	<IV value> 16 bytes IV value\n");
 	return;
+}
+/**
+ * hex_to_int- Utility function for coverting string to hex
+ */
+int hex_to_int(char c) {
+	switch(c) {
+	case '0':
+		return 0;
+	case '1':
+		return 1;
+	case '2':
+		return 2;
+	case '3':
+		return 3;
+	case '4':
+		return 4;
+	case '5':
+		return 5;
+	case '6':
+		return 6;
+	case '7':
+		return 7;
+	case '8':
+		return 8;
+	case '9':
+		return 9;
+	case 'a':
+	case 'A':
+		return 0x0A;
+	case 'b':
+	case 'B':
+		return 0x0B;
+	case 'c':
+	case 'C':
+		return 0x0C;
+	case 'd':
+	case 'D':
+		return 0x0D;
+	case 'e':
+	case 'E':
+		return 0x0E;
+	case 'f':
+	case 'F':
+		return 0x0F;
+    }
+    return -1;
+}
+
+static int convert_to_hex(const char* input, unsigned char* output, unsigned int size)
+{
+        unsigned int i = 0, n = 0;
+        unsigned char high_nibble, low_nibble;
+
+        i = size * 2;
+        n = strlen(input);
+        if (n > i) {
+                printf("Hex string is too long, ignoring excess\n");
+                n = i; /* Ignoring extra part */
+        } else if (n < i) {
+                printf("Hex string is too short, padding with zero bytes to length\n");
+        }
+
+        memset(output, 0, size);
+        for (i = 0; i < n; i += 2) {
+                high_nibble = (unsigned char)*input++; /*first character */
+                low_nibble = (unsigned char)*input++; /*second character */
+                /* Check if both characters are valid hexadecimal digits */
+                if (!isxdigit(high_nibble) || !isxdigit(low_nibble)) {
+                        printf("Non-hex digit\n");
+                        return 0;
+                }
+        /* Convert nibble to its integer value */
+        high_nibble = (unsigned char)hex_to_int(high_nibble);
+        low_nibble = (unsigned char)hex_to_int(low_nibble);
+        output[i / 2] = (high_nibble << 4) | low_nibble;
+    }
+    return 1;
 }
 
 /**
@@ -285,8 +365,9 @@ int main(int argc, char *argv[])
 	char *key_file = NULL, *blob, *algo, *file_enc, *file_dec;
 	char *cipher_text, *output_text;
 	struct aes_cipher vec;
+	unsigned char IV[IV_LEN];
 
-	if (argc != 5) {
+	if (argc != 7) {
 		print_help(argv[0]);
 		return 0;
 	}
@@ -325,7 +406,7 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-	/* Read iv and encrypted data from input file */
+	/* Read encrypted data from input file */
 	file_enc = argv[3];
 	ret = read_file(file_enc, &cipher_text, &vec.len);
 	if (ret) {
@@ -333,9 +414,14 @@ int main(int argc, char *argv[])
 		free(vec.key);
 		return ret;
 	}
-	vec.iv = cipher_text;
-	vec.ctext = cipher_text + IV_LEN;
-	vec.len = vec.len - IV_LEN;
+	ret = convert_to_hex(argv[6], IV, IV_LEN);
+	if (ret) {
+		vec.iv = (const char *)IV;
+	}  else {
+		print_help(argv[0]);
+		return ret;
+	}
+	vec.ctext = cipher_text;
 	if (vec.len % 16 != 0) {
 		printf("Error: AES Data size is not valid.\n");
 		free(cipher_text);
