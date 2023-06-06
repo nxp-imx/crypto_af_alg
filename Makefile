@@ -1,6 +1,6 @@
-OBJS = caam-decrypt.o
+OBJS = caam-crypt.o
 
-TARGET = caam-decrypt
+TARGET = caam-crypt
 
 CFLAGS += -Wall -Werror
 LFLAGS += -L -lcrypto

@@ -1,5 +1,5 @@
 # 1. Overview
-This document provides a step-by-step procedure on how to decrypt a file (encrypted with AES-CBC) without disclosing the key in the kernel using caam-decrypt application.
+This document provides a step-by-step procedure on how to encrypt/decrypt a file without disclosing the key in the kernel using caam-crypt application.
 
 # 2. Black keys
 Represent keys stored in memory in encrypted form and decrypted on-the-fly when used.
@@ -15,7 +15,7 @@ Encapsulation of black key is called black blob. The decapsulation will result i
 caam-keygen application is needed to import black key from black blob. Make sure that caam-keygen app is already present at /usr/bin.
 
 ## 4.2 PKCS#7 Padding Scheme
-caam-decrypt application assumes that plaintext must be padded as per pkcs#7 padding scheme and then encrypted.
+caam-crypt application assumes that plaintext must be padded as per pkcs#7 padding scheme and then encrypted.
 
 # 5. Build the kernel
 
@@ -30,7 +30,7 @@ Get a bootable image that includes the black key support and AF_ALG socket inter
 
 
 ## 5.2 Build a toolchain
-Build a toolchain in order to cross compile the sources of the caam-decrypt application. For details refer to i.MX Yocto Project User's Guide from https://www.nxp.com/
+Build a toolchain in order to cross compile the sources of the caam-crypt application. For details refer to i.MX Yocto Project User's Guide from https://www.nxp.com/
 
 ```
 $ wget https://developer.arm.com/-/media/Files/downloads/gnu-a/8.2-2019.01/gcc-arm-8.2-2019.01-x86_64-aarch64-elf.tar.xz
@@ -47,7 +47,7 @@ Setup the environment for cross compilation using the toolchain previously prepa
   $ export CC=${CROSS_COMPILE}gcc
   $ export LD=${CROSS_COMPILE}ld
 ```
-- Build the caam-decrypt user space application, go to source folder and run:
+- Build the caam-crypt user space application, go to source folder and run:
 
 ```
   $ make clean
@@ -55,35 +55,50 @@ Setup the environment for cross compilation using the toolchain previously prepa
 ```
 
 # 6. Usage
-After the device successfully boots with the previously generated image, caam-decrypt can be used to decrypt a encrypted data stored in a file.
+After the device successfully boots with the previously generated image,
+caam-crypt can be used to encrypt/decrypt a plain/encrypted data stored in a file
+respectively.
 
 ```
-  $ ./caam-decrypt
-Application usage: caam-decrypt [options]
+  $ ./caam-crypt
+Application usage: caam-crypt [options]
 Options:
-	<blob_name> <enc_algo> <input_file> <output_file>
+	<crypto_op> <algo> [-k <blob_name>] [-in <input_file>] [-out <output_file>] [-iv <IV value>]
+	<crypto_op> can be enc or dec
+		    enc for encryption.
+		    dec for decryption.
+	<algo> can be AES-256-CBC
 	<blob_name> the absolute path of the file that contains the black blob
-	<enc_algo> can be AES-256-CBC
 	<input_file> the absolute path of the file that contains input data
-		     initialization vector(iv) of 16 bytes prepended
-		     size of input file must be multiple of 16
+		     In case of encryption, input file will contain plain data.
+		     In case of decryption, input file will contain encrypted data.
 	<output_file> the absolute path of the file that contains output data
+	<IV value> 16 bytes IV value
 ```
 
 # 7. Use case example
 
 ```
-  $ caam-decrypt myblob AES-256-CBC my_encrypted_file output_decrypted
+For encryption:-
+
+  $ caam-crypt enc AES-256-CBC -k myblob -in <plain_text_file> -out <encrypted_file> -iv <16-byte IV value>
+
+For decryption:-
+
+  $ caam-crypt dec AES-256-CBC -k myblob -in <encrypted_file> -out <decrypted_file> -iv <16-byte IV value>
 ```
 
 where:
 
-- myblob - generated black key blob. caam-keygen application will import a black key from black blob. this black key will be used by CAAM for decryption.
-- AES-256-CBC - currently the only supported symmetric algorithm used for decryption operation. user has to make sure that encrypted data must uses the same algorithm.
-- my_encrypted_file - Encrypted data stored in a file. Initialization vector(iv) of 16 bytes used during encryption must be prepended to encrypted data.
+- myblob - generated black key blob. caam-keygen application will import a black key from black blob. this black key will be used by CAAM for encryption/decryption.
+- AES-256-CBC - currently the only supported symmetric algorithm used for encryption/decryption operation.
+		NOTE:- User has to make sure that algorithm used for encryption/decryption should be same.
+- encrypted_file - Encrypted data stored in a file.
+- plain_text_file - Plain text stored in a file (Padding is added for making
+		    data as multiples of block size).
+- decrypted_file - Decrypted data stored in a file.
+- iv - 16 bytes IV value
 ```
 AES Encrypted file format
-	16 Octets - Initialization Vector (IV) is an input to encryption algorithm.
-	nn Octets - Encrypted message  (for AES-256-CBC, it must be multiple of 16)
+	nn Octets - Encrypted message
 ```
-- output_decrypted - contain decrypted data after successful decryption operation.

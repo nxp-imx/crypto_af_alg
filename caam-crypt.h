@@ -17,7 +17,10 @@
 #define KEY_LOCATION		"/data/caam/"
 #define KEY_NAME		"black_key"
 #define IV_LEN			16
-
+#define BLOCK_SIZE		16
+#define MAX_ARG			11
+#define FAILURE			-1
+#define SUCCESS			0
 /*
  * aes_cipher:	structure to describe a symmetric cipher input
  * @key:	Pointer to key
@@ -29,7 +32,7 @@
  */
 struct aes_cipher {
 	char *key;
-	const char *iv;
+	char *iv;
 	char *ptext;
 	char *ctext;
 	unsigned int klen;
