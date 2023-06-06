@@ -18,7 +18,7 @@
 #include <sys/socket.h>
 #include <linux/if_alg.h>
 #include <linux/socket.h>
-#include "caam-decrypt.h"
+#include "caam-crypt.h"
 #include <ctype.h>
 
 /**
@@ -28,13 +28,14 @@ void print_help(char *app)
 {
 	printf("Application usage: %s [options]\n", app);
 	printf("Options:\n");
-	printf("        <blob_name> <enc_algo> <input_file> <output_file>");
-	printf(" [-iv <IV value>]\n");
+	printf("      <crypto_op> <algo> [-k <blob_name>]");
+	printf(" [-in <input_file>] [-out <output_file>] [-iv <IV value>]\n");
+	printf("        <crypto_op> can be enc or dec\n");
+	printf("         	    enc for encryption\n");
+	printf("         	    dec for decryption (default)\n");
+	printf("        <algo> can be AES-256-CBC\n");
 	printf("        <blob_name> the absolute path of the file that contains the black blob\n");
-	printf("        <enc_algo> can be AES-256-CBC\n");
-	printf("        <input_file> the absolute path of the file that contains input data\n"
-		"                     initialization vector(iv) of 16 bytes prepended\n"
-		"                     size of input file must be multiple of 16\n");
+	printf("        <input_file> the absolute path of the file that contains input data\n");
 	printf("        <output_file> the absolute path of the file that contains output data\n");
 	printf("	<IV value> 16 bytes IV value\n");
 	return;
@@ -83,10 +84,10 @@ int hex_to_int(char c) {
 	case 'F':
 		return 0x0F;
     }
-    return -1;
+    return FAILURE;
 }
 
-static int convert_to_hex(const char* input, unsigned char* output, unsigned int size)
+static int convert_to_hex(const char* input, char* output, unsigned int size)
 {
         unsigned int i = 0, n = 0;
         unsigned char high_nibble, low_nibble;
@@ -107,14 +108,14 @@ static int convert_to_hex(const char* input, unsigned char* output, unsigned int
                 /* Check if both characters are valid hexadecimal digits */
                 if (!isxdigit(high_nibble) || !isxdigit(low_nibble)) {
                         printf("Non-hex digit\n");
-                        return 0;
+                        return FAILURE;
                 }
         /* Convert nibble to its integer value */
         high_nibble = (unsigned char)hex_to_int(high_nibble);
         low_nibble = (unsigned char)hex_to_int(low_nibble);
         output[i / 2] = (high_nibble << 4) | low_nibble;
     }
-    return 1;
+    return SUCCESS;
 }
 
 /**
@@ -127,7 +128,7 @@ static int convert_to_hex(const char* input, unsigned char* output, unsigned int
  */
 int get_fd_socket(struct sockaddr_alg sa)
 {
-	int sock_fd, err;
+	int sock_fd = 0, err = 0;
 
 	/*
 	 * AF_ALG is the address family we use to interact with Kernel
@@ -138,7 +139,7 @@ int get_fd_socket(struct sockaddr_alg sa)
 	sock_fd = socket(AF_ALG, SOCK_SEQPACKET, 0);
 	if (sock_fd < 0) {
 		printf("Failed to allocate socket\n");
-		return -1;
+		return FAILURE;
 	}
 
 	err = bind(sock_fd, (struct sockaddr *)&sa, sizeof(sa));
@@ -173,28 +174,28 @@ int caam_import_black_key(char *blob_name)
 	* <key_name> the name of the file that will contain the black key.
 	*/
 	cpid = fork();
-	if (cpid == -1) {
+	if (cpid == FAILURE) {
 		printf("Failed to fork process.\n");
-		return -1;
+		return FAILURE;
 	}
 
 	if (cpid == 0) {
 		/* Execute command to import black key at KEY_LOCATION */
 		if (execvp(argv[0], argv) < 0) {
 			printf("Failed to execute command.\n");
-			return -1;
+			return FAILURE;
 		}
 	} else {
 		/* Wait for process to finish execution */
 		do {
 			w = waitpid(cpid, &status, WUNTRACED | WCONTINUED);
-			if (w == -1) {
+			if (w == FAILURE) {
 				printf("Fail to wait for process to finish execution.\n");
-				return -1;
+				return FAILURE;
 			}
 		} while (!WIFEXITED(status) && !WIFSIGNALED(status));
 	}
-	return 0;
+	return SUCCESS;
 }
 
 /**
@@ -264,18 +265,18 @@ int skcipher_crypt(int tfmfd, const struct aes_cipher *vec, bool encrypt, char *
 	 */
 	if (sendmsg(opfd, &msg, 0) < 0) {
 		printf("Failed to send message.\n");
-		return -1;
+		return FAILURE;
 	}
 	if (read(opfd, output, vec->len) < 0) {
 		printf("Failed to read.\n");
-		return -1;
+		return FAILURE;
 	}
 	close(opfd);
-	return 0;
+	return SUCCESS;
 }
 
 /**
- * store_decrypted_data - store the decrypted data in a file
+ * store_data - store the data in a file
  *
  * @file            : absolute path of the file that will contain output data
  * @output_text     : pointer to output data buffer
@@ -283,29 +284,41 @@ int skcipher_crypt(int tfmfd, const struct aes_cipher *vec, bool encrypt, char *
  *
  * Return           : '0' on success, -1 otherwise
  */
-int store_decrypted_data(char *file, char *output_text, unsigned int len)
-{
+int store_data(char *file, char *output_text, unsigned int len,
+			 bool encrypt)
+{	int ret = SUCCESS;
 	FILE *fp;
-	/* Note:- Caam-decrypt application supports PKCS#7 padding scheme
-	 * only.
-	 * Last byte stores no. of padded bytes in PKCS#7 padding scheme
-	 */
-	int padding_bytes_len = output_text[len - 1];
-	int final_len = len - padding_bytes_len;
-
 	fp = fopen(file, "wb");
 	if (!fp) {
 		printf("Failed to create %s.\n", file);
-		return -1;
+		return FAILURE;
 	}
-	if (fwrite(output_text, sizeof(char), final_len, fp) != final_len) {
-		printf("Failed to write in %s.\n", file);
-		fclose(fp);
-		return -1;
+	if (encrypt) {
+		if (fwrite(output_text, sizeof(char), len, fp) != len) {
+			printf("Failed to write in %s.\n", file);
+			ret = FAILURE;
+			goto file_close;
+		}
+	} else {
+		/* Note:- Caam-crypt application supports PKCS#7 padding
+		 * scheme only.
+		 * Last byte stores no. of padded bytes in PKCS#7 padding
+		 * scheme
+		 */
+		int padding_bytes_len = output_text[len - 1];
+		int final_len = len - padding_bytes_len;
+
+		if (fwrite(output_text, sizeof(char), final_len, fp) != final_len) {
+			printf("Failed to write in %s.\n", file);
+			ret = FAILURE;
+			goto file_close;
+		}
 	}
 
+file_close:
 	fclose(fp);
-	return 0;
+
+	return ret;
 }
 
 /**
@@ -325,32 +338,32 @@ int read_file(char *file, char **buf, unsigned int *len)
 	/* Get file size */
 	if (stat(file, &file_st)) {
 		printf("Failed to get file status.\n");
-		return -1;
+		return FAILURE;
 	}
 	*len = file_st.st_size;
 
 	fp = fopen(file, "rb");
 	if (!fp) {
 		printf("Failed to open file.\n");
-		return -1;
+		return FAILURE;
 	}
 
 	*buf = calloc(*len, sizeof(char));
 	if (*buf == NULL) {
 		printf("Failed to allocate memory.\n");
 		fclose(fp);
-		return -1;
+		return FAILURE;
 	}
 
 	if (fread(*buf, sizeof(char), *len, fp) != *len) {
 		printf("Failed to read data from file.\n");
 		free(*buf);
 		fclose(fp);
-		return -1;
+		return FAILURE;
 	}
 
 	fclose(fp);
-	return 0;
+	return SUCCESS;
 }
 
 int main(int argc, char *argv[])
@@ -361,26 +374,35 @@ int main(int argc, char *argv[])
 		.salg_name = "tk(cbc(aes))"	/* this is the cipher name */
 	};
 	int sock_fd, ret = 0;
-	bool decrypt_op = false;
-	char *key_file = NULL, *blob, *algo, *file_enc, *file_dec;
-	char *cipher_text, *output_text;
-	struct aes_cipher vec;
-	unsigned char IV[IV_LEN];
+	bool encrypt_op = false;
+	char *key_file = NULL;
+	char *blob = NULL;
+	char *algo = NULL;
+	char *file = NULL;
+	char *output_text = NULL;
+	char *plain_text = NULL;
+	struct aes_cipher vec = {};
 
-	if (argc != 7) {
+	if (argc != MAX_ARG) {
 		print_help(argv[0]);
-		return 0;
+		return FAILURE;
 	}
-
+	if (!strcmp(argv[1], "enc")) {
+		encrypt_op = true;
+	} else if (strcmp(argv[1], "enc") && strcmp(argv[1], "dec")) {
+		printf("Invalid crypto operation.\n");
+		print_help(argv[0]);
+		return FAILURE;
+	}
 	algo = argv[2];
 	if (strcmp(algo, "AES-256-CBC")) {
 		printf("encryption algo not supported\n");
 		print_help(argv[0]);
-		return -1;
+		return FAILURE;
 	}
 
 	/* Import black key(ECB or CCM) from black blob */
-	blob = argv[1];
+	blob = argv[4];
 	ret = caam_import_black_key(blob);
 	if (ret) {
 		printf("Failed to import black key from black blob.\n");
@@ -391,7 +413,7 @@ int main(int argc, char *argv[])
 	key_file = malloc(strlen(KEY_NAME) + strlen(KEY_LOCATION) + 1);
 	if (!key_file) {
 		printf("Failed to allocate memory for key file.\n");
-		return -1;
+		return FAILURE;
 	}
 	strcpy(key_file, KEY_LOCATION);
 	strcat(key_file, KEY_NAME);
@@ -406,62 +428,108 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-	/* Read encrypted data from input file */
-	file_enc = argv[3];
-	ret = read_file(file_enc, &cipher_text, &vec.len);
-	if (ret) {
-		printf("Failed to read enc file or file doesn't exist.\n");
-		free(vec.key);
-		return ret;
-	}
-	ret = convert_to_hex(argv[6], IV, IV_LEN);
-	if (ret) {
-		vec.iv = (const char *)IV;
-	}  else {
+	/*
+	 * Read data from input file
+	 * Input next to -in option is input file
+	 */
+	if (!strcmp(argv[5], "-in")) {
+		file = argv[6];
+		if (encrypt_op) {
+			/*
+			 * In case of encryption, input data is in
+			 * plain format.
+			 */
+			ret = read_file(file, &plain_text, &vec.len);
+			if (ret) {
+				printf("Failed to read plain text file or file doesn't exist.\n");
+				goto free_key;
+			}
+			/*
+			 * Padding plain data with PKCS#7 based padding style
+			 * for making it multiple of block size.
+			 */
+			int bytes_to_pad = BLOCK_SIZE - (vec.len) % BLOCK_SIZE;
+			vec.ptext = realloc(plain_text, (sizeof(char)) * (vec.len +
+					    bytes_to_pad));
+			if (!vec.ptext) {
+				printf("Failed to allocate memory.\n");
+				ret = FAILURE;
+				goto free_key;
+			}
+
+			for (int i = vec.len; i < vec.len + bytes_to_pad ; i++)
+				vec.ptext[i] = bytes_to_pad;
+			vec.len += bytes_to_pad;
+		} else {
+			/*
+			 * In case of decryption, data is cipher, text which we need
+			 * to decrypt.
+			 */
+			ret = read_file(file, &vec.ctext, &vec.len);
+			if (ret) {
+				printf("Failed to read enc file or file doesn't exist.\n");
+				goto free_key;
+			}
+		}
+	} else {
 		print_help(argv[0]);
-		return ret;
-	}
-	vec.ctext = cipher_text;
-	if (vec.len % 16 != 0) {
-		printf("Error: AES Data size is not valid.\n");
-		free(cipher_text);
-		free(vec.key);
-		return -1;
+		ret = FAILURE;
+		goto free_key;
 	}
 
+	/* Converting user provided IV to appropriate format. */
+	vec.iv = (char *)malloc(IV_LEN);
+	if (!vec.iv) {
+		printf("Failed to allocate memory.\n");
+		ret = FAILURE;
+		goto free_text;
+	}
+
+	ret = convert_to_hex(argv[10], vec.iv, IV_LEN);
+	if (ret) {
+		print_help(argv[0]);
+		goto free_iv;
+	}
 	output_text = calloc(vec.len, sizeof(char));
 	if (!output_text) {
 		printf("Failed to allocate memory for output text.\n");
-		free(cipher_text);
-		free(vec.key);
-		return -1;
+		ret = FAILURE;
+		goto free_iv;
 	}
 
 	/* tk(cbc(aes)) algorithm */
 	sock_fd = get_fd_socket(sa);
 	if (sock_fd < 0) {
-		free(output_text);
-		free(cipher_text);
-		free(vec.key);
-		return -1;
+		ret = FAILURE;
+		goto free_output;
 	}
 
-	/* Decryption */
-	ret = skcipher_crypt(sock_fd, &vec, decrypt_op, output_text);
+	/* Calling skcipher for encrypt/decrypt operation. */
+	ret = skcipher_crypt(sock_fd, &vec, encrypt_op, output_text);
 	if (ret) {
 		printf("Failed to decrypt.\n");
-		goto exit;
+		goto fd_close;
 	}
 
-	/* Write decrypted data in output file */
-	file_dec = argv[4];
-	ret = store_decrypted_data(file_dec, output_text, vec.len);
-
-exit:
+	/* Write data in output file */
+	if (!strcmp(argv[7], "-out")) {
+		file = argv[8];
+		ret = store_data(file, output_text, vec.len, encrypt_op);
+	} else {
+		print_help(argv[0]);
+	}
+fd_close:
 	close(sock_fd);
+free_output:
 	free(output_text);
-	free(cipher_text);
+free_iv:
+	free(vec.iv);
+free_text:
+	if (encrypt_op)
+		free(vec.ptext);
+	else
+		free(vec.ctext);
+free_key:
 	free(vec.key);
-
 	return ret;
 }
