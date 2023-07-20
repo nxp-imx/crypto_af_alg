@@ -21,6 +21,8 @@
 #include "caam-crypt.h"
 #include <ctype.h>
 
+#define AF_ALG_IV_LEN(len)	(sizeof(struct af_alg_iv) + (len))
+
 /**
  * print_help - print application help
  */
@@ -28,6 +30,16 @@ void print_help(char *app)
 {
 	printf("Application usage: %s [options]\n", app);
 	printf("Options:\n");
+	printf("For running performance test:-\n");
+	printf("	perf [-algo <algo_name>] [-dir <direction>] [-seconds <time in sec>]\n");
+	printf("        <algo_name> can be below:-\n");
+	printf("		aes-128-ecb, aes-192-ecb, aes-256-ecb\n");
+	printf("		aes-128-cbc, aes-192-cbc, aes-256-cbc\n");
+	printf("		aes-128-gcm, aes-192-gcm, aes-256-gcm\n");
+	printf("		sha256, sha384\n");
+	printf("        <direction> can be enc, dec or hash\n");
+	printf("        <time in sec> seconds > 0\n");
+	printf("For encryption/decryption operation:-\n");
 	printf("      <crypto_op> <algo> [-k <blob_name>]");
 	printf(" [-in <input_file>] [-out <output_file>] [-iv <IV value>]\n");
 	printf("        <crypto_op> can be enc or dec\n");
@@ -198,80 +210,173 @@ int caam_import_black_key(char *blob_name)
 	return SUCCESS;
 }
 
+static void afalg_set_aadlen(struct cmsghdr *cmsg, const unsigned int len)
+{
+	cmsg->cmsg_level = SOL_ALG;
+	cmsg->cmsg_type = ALG_SET_AEAD_ASSOCLEN;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(unsigned int));
+	*(__u32 *)CMSG_DATA(cmsg) = len;
+}
+
+static void afalg_set_iv(struct cmsghdr *cmsg, char *iv, int len)
+{
+	struct af_alg_iv *af_alg_iv;
+
+	cmsg->cmsg_level = SOL_ALG;
+	cmsg->cmsg_type = ALG_SET_IV;
+	cmsg->cmsg_len = CMSG_LEN(AF_ALG_IV_LEN(len));
+
+	af_alg_iv = (void *)CMSG_DATA(cmsg);
+	af_alg_iv->ivlen = len;
+	memcpy(af_alg_iv->iv, iv, af_alg_iv->ivlen);
+}
+
+static void afalg_set_op(struct cmsghdr *cmsg, const unsigned int op)
+{
+	cmsg->cmsg_level = SOL_ALG;
+	cmsg->cmsg_type = ALG_SET_OP;
+	cmsg->cmsg_len = CMSG_LEN(4);
+	*(__u32 *)CMSG_DATA(cmsg) = op;
+}
+
+int aead_msg(int tfmfd, const struct aead_vec *vec, struct msghdr *msg,
+		     struct iovec *iov, bool enc)
+{
+	int ret = 0;
+	struct cmsghdr *cmsg;
+
+	/* Set socket options for key */
+	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
+	if (ret) {
+		printf("Failed to set socket key, err = %d\n", ret);
+		return ret;
+	}
+
+	/* Set socket options for authentication tag size */
+	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_AEAD_AUTHSIZE, NULL, vec->clen - vec->plen);
+	if (ret) {
+		printf("Failed to set socket authentication tag size, err = %d\n", ret);
+		return ret;
+	}
+
+	cmsg = CMSG_FIRSTHDR(msg);
+	afalg_set_op(cmsg, enc ? ALG_OP_ENCRYPT : ALG_OP_DECRYPT);
+	cmsg = CMSG_NXTHDR(msg, cmsg);
+	afalg_set_iv(cmsg, vec->iv, 12);
+	cmsg = CMSG_NXTHDR(msg, cmsg);
+	afalg_set_aadlen(cmsg, vec->assoc_len);
+
+	/*
+	 * AEAD enc input is ptext: assoc data || plaintext
+	 * AEAD enc input length is plen: assoc_len + plaintext len
+	 *
+	 * AEAD dec input is ctext: assoc data || ciphertext || auth tag
+	 * AEAD dec input length is clen: assoc_len + ciphertext len + auth tag len
+	 */
+	iov->iov_base = enc ? vec->ptext : vec->ctext;
+	iov->iov_len = enc ? vec->plen : vec->clen;
+
+	msg->msg_iov = iov;
+	msg->msg_iovlen = 1;
+
+	return ret;
+}
+
 /**
- * skcipher_crypt - Encryption or decryption of an input
+ * sk_ecb_msg - Prepare message for encryption/decryption.
  *
  * @tfmfd           : The file descriptor for socket
  * @vec             : structure that contains key, iv, ptext/ctext.
- * @encrypt         : Used to determine if it's an encryption or decryption
+ * @enc		    : Used to determine if it's an encryption or decryption
  *                    operation
  * @output          : The output from encryption/decryption
  *
  * Return           : '0' on success, -1 otherwise
  */
-int skcipher_crypt(int tfmfd, const struct aes_cipher *vec, bool encrypt, char *output)
+int sk_ecb_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
+	       struct iovec *iov, bool enc)
 {
-	int opfd, err;
-	struct msghdr msg = {};
+	int ret = 0;
 	struct cmsghdr *cmsg;
-	struct af_alg_iv *af_alg_iv;
-	struct iovec iov;
-	char cbuf[CMSG_SPACE(4) + CMSG_SPACE(20)] = {0};
 
 	/* Set socket options for key */
-	err = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
-	if (err) {
-		printf("Failed to set socket key, err = %d\n", err);
-		return err;
+	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
+	if (ret) {
+		printf("Failed to set socket key, err = %d\n", ret);
+		return ret;
 	}
 
-	/*
-	 * Once it's "configured", we tell the kernel to get ready for
-	 * receiving some requests
-	 */
-	opfd = accept(tfmfd, NULL, 0);
-	if (opfd < 0) {
-		printf("Failed to open connection for the socket\n");
-		return -EBADF;
+	cmsg = CMSG_FIRSTHDR(msg);
+	afalg_set_op(cmsg, enc ? ALG_OP_ENCRYPT : ALG_OP_DECRYPT);
+
+	iov->iov_base = enc ? vec->ptext : vec->ctext;
+	iov->iov_len = vec->len;
+
+	msg->msg_iov = iov;
+	msg->msg_iovlen = 1;
+	return ret;
+}
+
+int sk_cbc_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
+	       struct iovec *iov, bool enc)
+{
+	int ret = 0;
+	struct cmsghdr *cmsg;
+
+	/* Set socket options for key */
+	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
+	if (ret) {
+		printf("Failed to set socket key, err = %d\n", ret);
+		return ret;
 	}
 
-	msg.msg_control = cbuf;
-	msg.msg_controllen = sizeof(cbuf);
+	cmsg = CMSG_FIRSTHDR(msg);
+	afalg_set_op(cmsg, enc ? ALG_OP_ENCRYPT : ALG_OP_DECRYPT);
+	cmsg = CMSG_NXTHDR(msg, cmsg);
+	afalg_set_iv(cmsg, vec->iv, 16);
 
-	cmsg = CMSG_FIRSTHDR(&msg);
-	cmsg->cmsg_level = SOL_ALG;
-	cmsg->cmsg_type = ALG_SET_OP;
-	cmsg->cmsg_len = CMSG_LEN(4);
-	*(__u32 *)CMSG_DATA(cmsg) = encrypt ? ALG_OP_ENCRYPT : ALG_OP_DECRYPT;
+	iov->iov_base = enc ? vec->ptext : vec->ctext;
+	iov->iov_len = vec->len;
 
-	cmsg = CMSG_NXTHDR(&msg, cmsg);
-	cmsg->cmsg_level = SOL_ALG;
-	cmsg->cmsg_type = ALG_SET_IV;
-	cmsg->cmsg_len = CMSG_LEN(20);
+	msg->msg_iov = iov;
+	msg->msg_iovlen = 1;
+	return ret;
+}
 
-	af_alg_iv = (void *)CMSG_DATA(cmsg);
-	af_alg_iv->ivlen = 16;
-	memcpy(af_alg_iv->iv, vec->iv, af_alg_iv->ivlen);
-
-	iov.iov_base = encrypt ? vec->ptext : vec->ctext;
-	iov.iov_len = vec->len;
-
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-
+int run_crypt(int opfd, struct msghdr *msg, char *output, unsigned int len)
+{
 	/*
 	 * Start sending data to the opfd and read back
 	 * from it to get our encrypted/decrypted data
 	 */
-	if (sendmsg(opfd, &msg, 0) < 0) {
+	if (sendmsg(opfd, msg, 0) < 0) {
 		printf("Failed to send message.\n");
 		return FAILURE;
 	}
-	if (read(opfd, output, vec->len) < 0) {
+
+	if (read(opfd, output, len) < 0) {
 		printf("Failed to read.\n");
 		return FAILURE;
 	}
-	close(opfd);
+	return SUCCESS;
+}
+
+int hash_crypt(int opfd, char *plaintext, unsigned int psize, char *output,
+	       unsigned int hashlen)
+{
+	/*
+	 * Start sending data to the opfd and read back
+	 * from it to get our encrypted/decrypted data
+	 */
+	if (write(opfd, plaintext, psize) < 0) {
+		printf("Failed to write message.\n");
+		return FAILURE;
+	}
+
+	if (read(opfd, output, hashlen) < 0) {
+		printf("Failed to read.\n");
+		return FAILURE;
+	}
 	return SUCCESS;
 }
 
@@ -284,8 +389,7 @@ int skcipher_crypt(int tfmfd, const struct aes_cipher *vec, bool encrypt, char *
  *
  * Return           : '0' on success, -1 otherwise
  */
-int store_data(char *file, char *output_text, unsigned int len,
-			 bool encrypt)
+int store_data(char *file, char *output_text, unsigned int len, bool encrypt)
 {	int ret = SUCCESS;
 	FILE *fp;
 	fp = fopen(file, "wb");
@@ -368,12 +472,14 @@ int read_file(char *file, char **buf, unsigned int *len)
 
 int main(int argc, char *argv[])
 {
+	if (!strcmp(argv[1], "perf"))
+		return run_perf_test(argc, argv);
 	struct sockaddr_alg sa = {
 		.salg_family = AF_ALG,
 		.salg_type = "skcipher",	/* selects the symmetric cipher */
 		.salg_name = "tk(cbc(aes))"	/* this is the cipher name */
 	};
-	int sock_fd, ret = 0;
+	int sock_fd = 0, opfd = 0, ret = 0;
 	bool encrypt_op = false;
 	char *key_file = NULL;
 	char *blob = NULL;
@@ -381,8 +487,13 @@ int main(int argc, char *argv[])
 	char *file = NULL;
 	char *output_text = NULL;
 	char *plain_text = NULL;
-	struct aes_cipher vec = {};
-
+	struct skcipher_vec vec = {};
+	struct iovec iov;
+	char cbuf[CMSG_SPACE(4) + CMSG_SPACE(20)] = {0};
+	struct msghdr msg = {
+		.msg_control = cbuf,
+		.msg_controllen = sizeof(cbuf)
+	};
 	if (argc != MAX_ARG) {
 		print_help(argv[0]);
 		return FAILURE;
@@ -504,11 +615,21 @@ int main(int argc, char *argv[])
 		goto free_output;
 	}
 
-	/* Calling skcipher for encrypt/decrypt operation. */
-	ret = skcipher_crypt(sock_fd, &vec, encrypt_op, output_text);
-	if (ret) {
-		printf("Failed to decrypt.\n");
+	ret = sk_cbc_msg(sock_fd, &vec, &msg, &iov, encrypt_op);
+	if (ret < 0)
 		goto fd_close;
+
+	opfd = accept(sock_fd, NULL, 0);
+	if (opfd < 0) {
+		printf("Failed to open connection for the socket\n");
+		ret = -EBADF;
+		goto fd_close;
+	}
+
+	ret = run_crypt(opfd, &msg, output_text, vec.len);
+	if (ret) {
+		printf("Failed to encrypt/decrypt\n");
+		goto opfd_close;
 	}
 
 	/* Write data in output file */
@@ -518,6 +639,9 @@ int main(int argc, char *argv[])
 	} else {
 		print_help(argv[0]);
 	}
+
+opfd_close:
+	close(opfd);
 fd_close:
 	close(sock_fd);
 free_output:
