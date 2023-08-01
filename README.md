@@ -63,6 +63,16 @@ respectively.
   $ ./caam-crypt
 Application usage: caam-crypt [options]
 Options:
+For running performance test:-
+	perf [-algo <algo_name>] [-dir <direction>] [-seconds <time in sec>]
+	<algo_name> can be below:-
+			aes-128-ecb, aes-192-ecb, aes-256-ecb
+			aes-128-cbc, aes-192-cbc, aes-256-cbc
+			aes-128-gcm, aes-192-gcm, aes-256-gcm
+			sha256, sha384
+	<direction> can be enc, dec or hash
+	<time in sec> seconds > 0
+For encryption/decryption operations:-
 	<crypto_op> <algo> [-k <blob_name>] [-in <input_file>] [-out <output_file>] [-iv <IV value>]
 	<crypto_op> can be enc or dec
 		    enc for encryption.
@@ -79,6 +89,10 @@ Options:
 # 7. Use case example
 
 ```
+For Performance benchmarking:-
+
+  $ caam-crypt perf -algo <algo_name> -dir <direction> -seconds <no.of sec>
+
 For encryption:-
 
   $ caam-crypt enc AES-256-CBC -k myblob -in <plain_text_file> -out <encrypted_file> -iv <16-byte IV value>
@@ -90,6 +104,9 @@ For decryption:-
 
 where:
 
+- algo_name - Crypto operation name
+- direction - It can be enc, dec or hash.
+- no. of sec - Time for which performance need to be measured.
 - myblob - generated black key blob. caam-keygen application will import a black key from black blob. this black key will be used by CAAM for encryption/decryption.
 - AES-256-CBC - currently the only supported symmetric algorithm used for encryption/decryption operation.
 		NOTE:- User has to make sure that algorithm used for encryption/decryption should be same.

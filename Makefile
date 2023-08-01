@@ -1,5 +1,4 @@
-OBJS = caam-crypt.o
-
+OBJS = caam-crypt.o caam-crypt-perf.o
 TARGET = caam-crypt
 
 CFLAGS += -Wall -Werror
