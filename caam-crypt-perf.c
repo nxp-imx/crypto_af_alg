@@ -135,11 +135,13 @@ static int test_aead_vec(const struct aead_vec *vec,
 {
 	int sock_fd = 0, opfd = 0, ret = 0, outlen = 0;
 	char cbuf[CMSG_SPACE(4) + CMSG_SPACE(16) + CMSG_SPACE(4)] = {0};
+	struct iovec iov;
 	struct msghdr msg = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
 		.msg_control = cbuf,
 		.msg_controllen = sizeof(cbuf)
 	};
-	struct iovec iov;
 	struct timespec start = { }, end = { };
 	uint32_t microseconds = seconds * SEC_TO_MICROSEC;
 	char *out;
@@ -154,7 +156,7 @@ static int test_aead_vec(const struct aead_vec *vec,
 	if (sock_fd < 0)
 		return -1;
 
-	ret = aead_msg(sock_fd, vec, &msg, &iov, enc);
+	ret = aead_msg(sock_fd, vec, &msg, enc);
 	if (ret < 0)
 		goto fd_close;
 
@@ -251,11 +253,13 @@ static int test_skcipher_ecb_vec(const struct skcipher_vec *vec,
 {
 	int sock_fd = 0, opfd = 0, ret = 0;
 	char cbuf[CMSG_SPACE(4)] = {0};
+	struct iovec iov;
 	struct msghdr msg = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
 		.msg_control = cbuf,
 		.msg_controllen = sizeof(cbuf)
 	};
-	struct iovec iov;
 	struct timespec start = { }, end = { };
 	uint32_t microseconds = seconds * SEC_TO_MICROSEC;
 	char *out;
@@ -270,7 +274,7 @@ static int test_skcipher_ecb_vec(const struct skcipher_vec *vec,
 	if (sock_fd < 0)
 		return -1;
 
-	ret = sk_ecb_msg(sock_fd, vec, &msg, &iov, enc);
+	ret = sk_ecb_msg(sock_fd, vec, &msg, enc);
 	if (ret < 0)
 		goto fd_close;
 
@@ -324,11 +328,13 @@ static int test_skcipher_cbc_vec(const struct skcipher_vec *vec,
 {
 	int sock_fd = 0, opfd = 0, ret = 0;
 	char cbuf[CMSG_SPACE(4) + CMSG_SPACE(20)] = {0};
+	struct iovec iov;
 	struct msghdr msg = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
 		.msg_control = cbuf,
 		.msg_controllen = sizeof(cbuf)
 	};
-	struct iovec iov;
 	struct timespec start = { }, end = { };
 	uint32_t microseconds = seconds * SEC_TO_MICROSEC;
 	char *out;
@@ -343,7 +349,7 @@ static int test_skcipher_cbc_vec(const struct skcipher_vec *vec,
 	if (sock_fd < 0)
 		return -1;
 
-	ret = sk_cbc_msg(sock_fd, vec, &msg, &iov, enc);
+	ret = sk_cbc_msg(sock_fd, vec, &msg, enc);
 	if (ret < 0)
 		goto fd_close;
 
