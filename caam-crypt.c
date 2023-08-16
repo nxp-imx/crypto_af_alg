@@ -465,8 +465,10 @@ int read_file(char *file, char **buf, unsigned int *len)
 
 int main(int argc, char *argv[])
 {
-	if (!strcmp(argv[1], "perf"))
-		return run_perf_test(argc, argv);
+	if (argv[1]) {
+		if (!strcmp(argv[1], "perf"))
+			return run_perf_test(argc, argv);
+	}
 	struct sockaddr_alg sa = {
 		.salg_family = AF_ALG,
 		.salg_type = "skcipher",	/* selects the symmetric cipher */
