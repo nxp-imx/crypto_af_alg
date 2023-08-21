@@ -245,6 +245,8 @@ int aead_msg(int tfmfd, const struct aead_vec *vec, struct msghdr *msg,
 	int ret = 0;
 	struct cmsghdr *cmsg;
 
+	if (!vec || !msg)
+		return -EINVAL;
 	/* Set socket options for key */
 	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
 	if (ret) {
@@ -296,6 +298,9 @@ int sk_ecb_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
 	int ret = 0;
 	struct cmsghdr *cmsg;
 
+	if (!vec || !msg)
+		return -EINVAL;
+
 	/* Set socket options for key */
 	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
 	if (ret) {
@@ -318,6 +323,9 @@ int sk_cbc_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
 	int ret = 0;
 	struct cmsghdr *cmsg;
 
+	if (!vec || !msg)
+		return -EINVAL;
+
 	/* Set socket options for key */
 	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
 	if (ret) {
@@ -338,6 +346,8 @@ int sk_cbc_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
 
 int run_crypt(int opfd, struct msghdr *msg, char *output, unsigned int len)
 {
+	if (!msg)
+		return -EINVAL;
 	/*
 	 * Start sending data to the opfd and read back
 	 * from it to get our encrypted/decrypted data
