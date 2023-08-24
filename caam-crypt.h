@@ -2,8 +2,6 @@
 /*
  * Copyright 2021, 2023 NXP
  *
- * Author: Gaurav Jain <gaurav.jain@nxp.com>
- *
  */
 #ifndef __APP_H
 #define __APP_H
