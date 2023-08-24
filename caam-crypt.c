@@ -240,11 +240,13 @@ static void afalg_set_op(struct cmsghdr *cmsg, const unsigned int op)
 }
 
 int aead_msg(int tfmfd, const struct aead_vec *vec, struct msghdr *msg,
-		     struct iovec *iov, bool enc)
+	     bool enc)
 {
 	int ret = 0;
 	struct cmsghdr *cmsg;
 
+	if (!vec || !msg)
+		return -EINVAL;
 	/* Set socket options for key */
 	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
 	if (ret) {
@@ -273,11 +275,8 @@ int aead_msg(int tfmfd, const struct aead_vec *vec, struct msghdr *msg,
 	 * AEAD dec input is ctext: assoc data || ciphertext || auth tag
 	 * AEAD dec input length is clen: assoc_len + ciphertext len + auth tag len
 	 */
-	iov->iov_base = enc ? vec->ptext : vec->ctext;
-	iov->iov_len = enc ? vec->plen : vec->clen;
-
-	msg->msg_iov = iov;
-	msg->msg_iovlen = 1;
+	msg->msg_iov->iov_base = enc ? vec->ptext : vec->ctext;
+	msg->msg_iov->iov_len = enc ? vec->plen : vec->clen;
 
 	return ret;
 }
@@ -294,10 +293,13 @@ int aead_msg(int tfmfd, const struct aead_vec *vec, struct msghdr *msg,
  * Return           : '0' on success, -1 otherwise
  */
 int sk_ecb_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
-	       struct iovec *iov, bool enc)
+	       bool enc)
 {
 	int ret = 0;
 	struct cmsghdr *cmsg;
+
+	if (!vec || !msg)
+		return -EINVAL;
 
 	/* Set socket options for key */
 	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
@@ -309,19 +311,20 @@ int sk_ecb_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
 	cmsg = CMSG_FIRSTHDR(msg);
 	afalg_set_op(cmsg, enc ? ALG_OP_ENCRYPT : ALG_OP_DECRYPT);
 
-	iov->iov_base = enc ? vec->ptext : vec->ctext;
-	iov->iov_len = vec->len;
+	msg->msg_iov->iov_base = enc ? vec->ptext : vec->ctext;
+	msg->msg_iov->iov_len = vec->len;
 
-	msg->msg_iov = iov;
-	msg->msg_iovlen = 1;
 	return ret;
 }
 
 int sk_cbc_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
-	       struct iovec *iov, bool enc)
+	       bool enc)
 {
 	int ret = 0;
 	struct cmsghdr *cmsg;
+
+	if (!vec || !msg)
+		return -EINVAL;
 
 	/* Set socket options for key */
 	ret = setsockopt(tfmfd, SOL_ALG, ALG_SET_KEY, vec->key, vec->klen);
@@ -335,16 +338,16 @@ int sk_cbc_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
 	cmsg = CMSG_NXTHDR(msg, cmsg);
 	afalg_set_iv(cmsg, vec->iv, 16);
 
-	iov->iov_base = enc ? vec->ptext : vec->ctext;
-	iov->iov_len = vec->len;
+	msg->msg_iov->iov_base = enc ? vec->ptext : vec->ctext;
+	msg->msg_iov->iov_len = vec->len;
 
-	msg->msg_iov = iov;
-	msg->msg_iovlen = 1;
 	return ret;
 }
 
 int run_crypt(int opfd, struct msghdr *msg, char *output, unsigned int len)
 {
+	if (!msg)
+		return -EINVAL;
 	/*
 	 * Start sending data to the opfd and read back
 	 * from it to get our encrypted/decrypted data
@@ -472,8 +475,10 @@ int read_file(char *file, char **buf, unsigned int *len)
 
 int main(int argc, char *argv[])
 {
-	if (!strcmp(argv[1], "perf"))
-		return run_perf_test(argc, argv);
+	if (argv[1]) {
+		if (!strcmp(argv[1], "perf"))
+			return run_perf_test(argc, argv);
+	}
 	struct sockaddr_alg sa = {
 		.salg_family = AF_ALG,
 		.salg_type = "skcipher",	/* selects the symmetric cipher */
@@ -491,6 +496,8 @@ int main(int argc, char *argv[])
 	struct iovec iov;
 	char cbuf[CMSG_SPACE(4) + CMSG_SPACE(20)] = {0};
 	struct msghdr msg = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
 		.msg_control = cbuf,
 		.msg_controllen = sizeof(cbuf)
 	};
@@ -615,7 +622,7 @@ int main(int argc, char *argv[])
 		goto free_output;
 	}
 
-	ret = sk_cbc_msg(sock_fd, &vec, &msg, &iov, encrypt_op);
+	ret = sk_cbc_msg(sock_fd, &vec, &msg, encrypt_op);
 	if (ret < 0)
 		goto fd_close;
 

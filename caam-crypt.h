@@ -76,13 +76,13 @@ struct perf_stat {
 
 int get_fd_socket(struct sockaddr_alg sa);
 int sk_ecb_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
-	       struct iovec *iov, bool enc);
+	       bool enc);
 int sk_cbc_msg(int tfmfd, const struct skcipher_vec *vec, struct msghdr *msg,
-	       struct iovec *iov, bool enc);
+	       bool enc);
 int run_crypt(int opfd, struct msghdr *msg, char *output, unsigned int len);
 int run_perf_test(int argc, char *argv[]);
 int aead_msg(int tfmfd, const struct aead_vec *vec, struct msghdr *msg,
-	     struct iovec *iov, bool enc);
+	     bool enc);
 int hash_crypt(int opfd, char *plaintext, unsigned int psize, char *output,
 	       unsigned int hashlen);
 void print_help(char *app);
